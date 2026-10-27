@@ -1,0 +1,633 @@
+
+// ============================================================
+// PRISMA SCHEMA
+// Garden planning platform
+// Stack: NestJS + PostgreSQL + Prisma 7
+// Image storage: Cloudinary
+// ============================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// Переліки допустимих значень для полів бази даних.
+// ============================================================
+
+// Роль користувача в системі.
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// Стан облікового запису.
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+// Тип рослини в ботанічній ієрархії.
+enum PlantKind {
+  SPECIES
+  CULTIVAR
+  HYBRID
+  VARIETY
+  SUBSPECIES
+  UNKNOWN
+}
+
+// Категорія рослини для фільтрів каталогу.
+enum PlantCategory {
+  TREE
+  SHRUB
+  PERENNIAL
+  ANNUAL
+  BIENNIAL
+  BULB
+  GRASS
+  FERN
+  CLIMBER
+  GROUNDCOVER
+  SUCCULENT
+  AQUATIC
+  OTHER
+}
+
+// Стан запису рослини у спільному каталозі.
+enum PlantStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  ARCHIVED
+}
+
+// Освітлення, яке підходить рослині або наявне на клумбі.
+enum LightRequirement {
+  FULL_SUN
+  PARTIAL_SUN
+  PARTIAL_SHADE
+  FULL_SHADE
+}
+
+// Вологість ґрунту.
+enum SoilMoisture {
+  DRY
+  MEDIUM
+  MOIST
+  WET
+}
+
+// Тип ґрунту.
+enum SoilType {
+  SANDY
+  LOAMY
+  CLAY
+  PEATY
+  CHALKY
+  MIXED
+}
+
+// Кислотність ґрунту.
+enum SoilPH {
+  ACIDIC
+  SLIGHTLY_ACIDIC
+  NEUTRAL
+  SLIGHTLY_ALKALINE
+  ALKALINE
+}
+
+// Колір квітів.
+enum BloomColor {
+  WHITE
+  CREAM
+  YELLOW
+  ORANGE
+  RED
+  PINK
+  PURPLE
+  BLUE
+  GREEN
+  BROWN
+  MULTICOLOR
+}
+
+// Провайдер фотографії.
+enum ImageStorageType {
+  CLOUDINARY
+  EXTERNAL
+}
+
+// Походження даних про рослину.
+enum PlantSourceType {
+  BOTANICAL_DATABASE
+  WEBSITE
+  BOOK
+  EXPERT
+  USER
+  AI
+  OTHER
+}
+
+// Статус пошуку та додавання нової рослини через AI.
+enum PlantSubmissionStatus {
+  PENDING
+  SEARCHING
+  NEEDS_REVIEW
+  APPROVED
+  REJECTED
+  FAILED
+}
+
+// Статус перевірки окремої властивості рослини.
+enum PlantFactStatus {
+  UNVERIFIED
+  VERIFIED
+  DISPUTED
+}
+
+// ============================================================
+// USERS AND AUTHENTICATION
+// Користувачі, сесії та відновлення пароля.
+// ============================================================
+
+// Обліковий запис користувача.
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique @db.VarChar(254)
+  passwordHash String
+  name         String?    @db.VarChar(100)
+  role         UserRole   @default(USER)
+  status       UserStatus @default(ACTIVE)
+
+  // Час створення та останнього оновлення профілю.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Авторизація.
+  sessions       Session[]
+  passwordResets PasswordResetToken[]
+
+  // Особисті проєкти та колекція рослин.
+  flowerbeds       Flowerbed[]
+  plantCollection  UserPlant[]
+  plantSubmissions PlantSubmission[]
+
+  // Рослини, які користувач запропонував для каталогу.
+  createdPlants Plant[] @relation("PlantCreator")
+
+  @@index([status, createdAt])
+}
+
+// Серверні сесії.
+// У tokenHash зберігається хеш токена, а не сам токен.
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique
+  userId    String   @db.Uuid
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+// Одноразові токени відновлення пароля.
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String    @unique
+  userId    String    @db.Uuid
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+// ============================================================
+// PLANT CATALOG
+// Спільний каталог видів, сортів та інших рослин.
+// ============================================================
+
+// Основна сутність каталогу рослин.
+// Один запис доступний усім користувачам.
+// Розміри зберігаються в сантиметрах, температури — у °C.
+model Plant {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Наукова назва та URL-дружній ідентифікатор.
+  // Наукову назву потрібно нормалізувати перед записом.
+  scientificName String    @unique @db.VarChar(255)
+  slug           String    @unique @db.VarChar(255)
+  kind           PlantKind @default(UNKNOWN)
+  category       PlantCategory @default(OTHER)
+  status         PlantStatus   @default(PENDING)
+
+  // Ботанічна ієрархія.
+  // Наприклад, сорт може посилатися на відповідний вид.
+  parentId String? @db.Uuid
+  parent   Plant?  @relation("PlantHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Plant[] @relation("PlantHierarchy")
+
+  // Таксономія.
+  family  String? @db.VarChar(150)
+  genus   String? @db.VarChar(150)
+  species String? @db.VarChar(150)
+
+  // Назва сорту, якщо запис описує конкретний культивар.
+  cultivar String? @db.VarChar(150)
+
+  // Опис, походження та додаткові відомості.
+  description String? @db.Text
+  origin      String? @db.VarChar(255)
+
+  // Дорослі розміри рослини в сантиметрах.
+  // Мінімальне та максимальне значення допомагають
+  // показувати діапазон розмірів, а не одне приблизне число.
+  minHeightCm Float?
+  maxHeightCm Float?
+  minWidthCm  Float?
+  maxWidthCm  Float?
+
+  // Зимостійкість за шкалою USDA.
+  // Наприклад, 5 означає зону USDA 5.
+  usdaZoneMin Int?
+  usdaZoneMax Int?
+
+  // Мінімальна та максимальна температура вирощування,
+  // якщо ці значення підтверджені джерелом.
+  minTempC Float?
+  maxTempC Float?
+
+  // Чи потребує рослина зимового укриття.
+  winterProtectionRequired Boolean?
+
+  // Умови вирощування.
+  // Масиви дозволяють вказати кілька допустимих умов.
+  lightRequirements LightRequirement[]
+  soilMoisture      SoilMoisture[]
+  soilTypes         SoilType[]
+  soilPH            SoilPH[]
+
+  // Стійкість до несприятливих умов.
+  droughtTolerant Boolean?
+  windTolerant    Boolean?
+  saltTolerant    Boolean?
+
+  // Декоративні властивості.
+  bloomColors         BloomColor[]
+  bloomMonths         Int[]
+  foliageColors       String[]
+  evergreen           Boolean?
+  fragrant            Boolean?
+  attractsPollinators Boolean?
+  poisonous           Boolean?
+
+  // Догляд.
+  // Темп росту: наприклад, slow, medium, fast.
+  growthRate String? @db.VarChar(50)
+
+  pruningRequired Boolean?
+  pruningMonths   Int[]
+  plantingMonths  Int[]
+
+  // Рекомендована відстань між рослинами в сантиметрах.
+  spacingCm Float?
+
+  // Тривалість життя в роках, якщо відома.
+  lifespanYears Int?
+
+  // Гнучкі додаткові характеристики, які ще не мають
+  // окремих типізованих полів.
+  // Основні характеристики не слід зберігати тут.
+  extraAttributes Json?
+
+  // Авторство та перевірка запису.
+  createdById String?   @db.Uuid
+  verifiedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdBy User? @relation("PlantCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Зв'язки з іншими сутностями каталогу.
+  names       PlantName[]
+  images      PlantImage[]
+  sources     PlantSource[]
+  facts       PlantFact[]
+  collection  UserPlant[]
+  bedPlants   FlowerbedPlant[]
+
+  submissions PlantSubmission[] @relation("MatchedPlant")
+
+  @@index([category, status])
+  @@index([parentId])
+  @@index([genus, species])
+  @@index([minHeightCm, maxHeightCm])
+  @@index([minWidthCm, maxWidthCm])
+  @@index([usdaZoneMin, usdaZoneMax])
+  @@index([minTempC])
+  @@index([evergreen, fragrant])
+  @@index([createdAt])
+}
+
+// Українські, латинські та альтернативні назви рослини.
+// Окрема таблиця дозволяє шукати за різними мовами
+// та синонімами, не дублюючи саму рослину.
+model PlantName {
+  id        String   @id @default(uuid()) @db.Uuid
+  plantId   String   @db.Uuid
+  name      String   @db.VarChar(255)
+  language  String   @default("uk") @db.VarChar(10)
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@unique([plantId, name, language])
+  @@index([name])
+  @@index([language, name])
+}
+
+// Фотографії рослин.
+// Зображення зберігаються в Cloudinary, а в базі —
+// URL, publicId, джерело та відомості про ліцензію.
+model PlantImage {
+  id      String @id @default(uuid()) @db.Uuid
+  plantId String @db.Uuid
+
+  // Провайдер: Cloudinary або зовнішнє джерело.
+  storageType ImageStorageType @default(CLOUDINARY)
+
+  // HTTPS-посилання на зображення.
+  url String @db.Text
+
+  // Cloudinary public_id потрібний для формування URL
+  // різних розмірів та керування файлом через API.
+  // Для EXTERNAL може бути null.
+  storageKey String? @db.VarChar(500)
+
+  // Посилання на оригінальну сторінку фотографії.
+  sourceUrl String? @db.Text
+
+  // Автор і ліцензія фотографії.
+  author  String? @db.VarChar(255)
+  license String? @db.VarChar(255)
+
+  // Опис зображення для доступності.
+  alt String? @db.VarChar(255)
+
+  // Розміри оригінального зображення в пікселях.
+  width  Int?
+  height Int?
+
+  // Основна фотографія для картки рослини.
+  isPrimary Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@index([plantId])
+  @@index([storageType])
+}
+
+// Джерела інформації про рослину.
+// Дозволяє перевірити, звідки взято ботанічні відомості.
+model PlantSource {
+  id      String          @id @default(uuid()) @db.Uuid
+  plantId String          @db.Uuid
+  type    PlantSourceType
+
+  // Назва бази даних, сайту, книги або іншого джерела.
+  name String @db.VarChar(255)
+
+  // Посилання на джерело, якщо воно доступне.
+  url String? @db.Text
+
+  // Час останньої перевірки джерела.
+  accessedAt DateTime?
+
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@index([plantId])
+}
+
+// Перевірка окремих характеристик.
+// Дозволяє згодом зберігати джерело, статус перевірки
+// та дату перевірки для кожної важливої властивості.
+model PlantFact {
+  id      String @id @default(uuid()) @db.Uuid
+  plantId String @db.Uuid
+
+  // Ключ властивості, наприклад minHeightCm або minTempC.
+  propertyKey String @db.VarChar(100)
+
+  // Значення характеристики в структурованому форматі.
+  // Для основних полів Plant це додатковий запис про
+  // походження та перевірку, а не заміна самого поля.
+  value Json
+
+  status PlantFactStatus @default(UNVERIFIED)
+
+  // Посилання на джерело, що підтверджує значення.
+  sourceUrl String? @db.Text
+
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@index([plantId, propertyKey])
+  @@index([status])
+}
+
+// ============================================================
+// USER PLANT COLLECTION
+// Особиста колекція рослин користувача.
+// Не дублює загальний каталог.
+// ============================================================
+
+// Рослини, які користувач зберіг у своїй колекції.
+// Наприклад, список улюблених рослин або рослин,
+// які він планує придбати.
+model UserPlant {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  plantId   String   @db.Uuid
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  // Одну рослину не можна двічі додати в колекцію
+  // одного користувача.
+  @@unique([userId, plantId])
+  @@index([userId, createdAt])
+  @@index([plantId])
+}
+
+// ============================================================
+// FLOWERBEDS
+// Особисті клумби користувачів.
+// ============================================================
+
+// Клумба — окремий проєкт із розмірами та умовами.
+// Користувач може мати будь-яку кількість клумб.
+model Flowerbed {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String  @db.Uuid
+  name        String  @db.VarChar(150)
+  description String? @db.Text
+
+  // Габарити клумби в сантиметрах.
+  widthCm  Float?
+  lengthCm Float?
+
+  // Площа в квадратних метрах.
+  // За потреби обчислюється на сервері з розмірів.
+  areaM2 Float?
+
+  // Умови ділянки.
+  lightRequirements LightRequirement[]
+  soilTypes         SoilType[]
+  soilPH            SoilPH[]
+  soilMoisture      SoilMoisture[]
+
+  // Розташування та клімат.
+  location    String? @db.VarChar(255)
+  climateZone Int?
+
+  // Нотатки користувача.
+  notes String? @db.Text
+
+  // Дані для візуального планування.
+  // Наприклад, контур неправильної клумби або масштаб.
+  // Координати окремих рослин зберігаються у FlowerbedPlant.
+  layout Json?
+
+  // Публічне посилання на клумбу, якщо користувач
+  // дозволив показувати її іншим.
+  isPublic Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plants FlowerbedPlant[]
+
+  @@index([userId, updatedAt])
+  @@index([isPublic, createdAt])
+}
+
+// ============================================================
+// FLOWERBED PLANTS
+// Конкретні посадки рослин у клумбах.
+// ============================================================
+
+// Один запис означає одну групу посадки.
+// Ту саму рослину можна розмістити в клумбі кілька разів
+// у різних координатах, створивши окремі записи.
+model FlowerbedPlant {
+  id          String @id @default(uuid()) @db.Uuid
+  flowerbedId String @db.Uuid
+  plantId     String @db.Uuid
+
+  // Кількість рослин у групі.
+  quantity Int @default(1)
+
+  // Позиція в межах клумби в сантиметрах.
+  // Початок координат визначає конструктор на фронтенді.
+  xCm Float?
+  yCm Float?
+
+  // Кут повороту групи або об'єкта в градусах.
+  rotationDeg Float?
+
+  // Особисті нотатки про цю посадку.
+  notes String? @db.Text
+
+  // Дата посадки.
+  plantedAt DateTime?
+
+  // Фактичні розміри конкретної рослини,
+  // якщо вони відрізняються від типових характеристик.
+  customHeightCm Float?
+  customWidthCm  Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  flowerbed Flowerbed @relation(fields: [flowerbedId], references: [id], onDelete: Cascade)
+  plant     Plant     @relation(fields: [plantId], references: [id], onDelete: Restrict)
+
+  // Унікального обмеження flowerbedId + plantId немає:
+  // та сама рослина може бути в різних частинах клумби.
+  @@index([flowerbedId])
+  @@index([plantId])
+}
+
+// ============================================================
+// AI PLANT DISCOVERY
+// Пошук, перевірка та додавання нових рослин.
+// ============================================================
+
+// Заявка на пошук рослини, якої немає в каталозі.
+// AI-результати спочатку зберігаються тут,
+// а не безпосередньо у спільному каталозі.
+model PlantSubmission {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+
+  // Назва, яку ввів користувач.
+  query    String @db.VarChar(255)
+  language String @default("uk") @db.VarChar(10)
+
+  status PlantSubmissionStatus @default(PENDING)
+
+  // Рослина каталогу, з якою знайшли відповідність.
+  // Якщо це вже наявна рослина, повторно її не створюємо.
+  matchedPlantId String? @db.Uuid
+
+  // Запропоновані характеристики та результати пошуку.
+  // JSON використовується для тимчасових даних AI.
+  proposedData  Json?
+  searchResults Json?
+
+  // Модель AI та оцінка впевненості.
+  aiModel    String? @db.VarChar(100)
+  confidence Float?
+
+  // Повідомлення про помилку, якщо пошук не вдався.
+  errorMessage String? @db.Text
+
+  // Час перевірки та завершення обробки.
+  reviewedAt  DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  matchedPlant Plant? @relation("MatchedPlant", fields: [matchedPlantId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([matchedPlantId])
+}
