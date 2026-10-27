@@ -31,9 +31,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-  ) { }
+  constructor(private readonly authService: AuthService) {}
 
   @Post('register')
   @ApiOperation({
@@ -54,14 +52,9 @@ export class AuthController {
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const user = await this.authService.register(
-      dto.email,
-      dto.password,
-    );
+    const user = await this.authService.register(dto.email, dto.password);
 
-    const session = await this.authService.createSession(
-      user.id,
-    );
+    const session = await this.authService.createSession(user.id);
 
     this.setSessionCookie(response, session);
 
@@ -90,16 +83,10 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) response: Response,
   ) {
-
     console.log('authData- back ');
-    const user = await this.authService.validateUser(
-      dto.email,
-      dto.password,
-    );
+    const user = await this.authService.validateUser(dto.email, dto.password);
 
-    const session = await this.authService.createSession(
-      user.id,
-    );
+    const session = await this.authService.createSession(user.id);
 
     this.setSessionCookie(response, session);
 
@@ -127,7 +114,6 @@ export class AuthController {
     description: 'Session is invalid or expired.',
   })
   async me(@Req() request: Request) {
-
     const token = request.cookies?.[AUTH_COOKIE];
 
     if (!token) {
@@ -136,8 +122,7 @@ export class AuthController {
       };
     }
 
-    const user =
-      await this.authService.getUserBySession(token);
+    const user = await this.authService.getUserBySession(token);
 
     return {
       user,
@@ -178,7 +163,10 @@ export class AuthController {
   @ApiOperation({ summary: 'Request a password-reset email' })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.authService.requestPasswordReset(dto.email);
-    return { message: 'Якщо такий email зареєстрований, посилання для відновлення вже надіслано.' };
+    return {
+      message:
+        'Якщо такий email зареєстрований, посилання для відновлення вже надіслано.',
+    };
   }
 
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -188,10 +176,7 @@ export class AuthController {
     await this.authService.resetPassword(dto.token, dto.password);
   }
 
-  private setSessionCookie(
-    response: Response,
-    token: string,
-  ) {
+  private setSessionCookie(response: Response, token: string) {
     response.cookie(AUTH_COOKIE, token, {
       httpOnly: true,
       secure: true,
@@ -201,4 +186,3 @@ export class AuthController {
     });
   }
 }
-

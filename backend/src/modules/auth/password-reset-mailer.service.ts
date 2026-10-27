@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 export class PasswordResetMailerService {
   private readonly logger = new Logger(PasswordResetMailerService.name);
 
-  constructor(private readonly config: ConfigService) { }
+  constructor(private readonly config: ConfigService) {}
 
   async send(email: string, resetUrl: string) {
     console.log('\n🔴 SEND EMAIL CALLED');
@@ -86,7 +86,9 @@ export class PasswordResetMailerService {
       console.error(error);
       // НЕ кидаємо помилку - система вже показала повідомлення
       // цих логувати помилку, але юзер вже отримав відповідь
-      this.logger.error(`Failed to send password reset email: ${error.message}`);
+      this.logger.error(
+        `Failed to send password reset email: ${error.message}`,
+      );
     }
   }
 }

@@ -321,6 +321,7 @@ model Plant {
   // Зв'язки з іншими сутностями каталогу.
   names       PlantName[]
   images      PlantImage[]
+  variants    PlantVariant[]
   sources     PlantSource[]
   facts       PlantFact[]
   collection  UserPlant[]
@@ -363,6 +364,7 @@ model PlantName {
 model PlantImage {
   id      String @id @default(uuid()) @db.Uuid
   plantId String @db.Uuid
+  variantId String? @db.Uuid
 
   // Провайдер: Cloudinary або зовнішнє джерело.
   storageType ImageStorageType @default(CLOUDINARY)
@@ -396,9 +398,53 @@ model PlantImage {
   updatedAt DateTime @updatedAt
 
   plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  variant PlantVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([plantId])
+  @@index([variantId])
   @@index([storageType])
+}
+
+// A horticultural variant of a verified botanical plant. It is never used for
+// botanical synonyms; those remain PlantName rows on the parent Plant.
+model PlantVariant {
+  id String @id @default(uuid()) @db.Uuid
+  plantId String @db.Uuid
+  varietyName String @db.VarChar(150)
+  normalizedVarietyName String @db.VarChar(150)
+  isNoSpecifiedVariety Boolean @default(false)
+  status PlantStatus @default(PENDING)
+  description String? @db.Text
+  verifiedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  colors PlantVariantColor[]
+  images PlantImage[]
+
+  @@unique([plantId, normalizedVarietyName])
+  @@index([plantId, status])
+  @@index([normalizedVarietyName])
+}
+
+// Color is specific to a horticultural variant. The label can describe flower,
+// foliage or seasonal color without inventing a generic BloomColor enum value.
+model PlantVariantColor {
+  id String @id @default(uuid()) @db.Uuid
+  variantId String @db.Uuid
+  name String @db.VarChar(100)
+  normalizedName String @db.VarChar(100)
+  decorativePart String? @db.VarChar(100)
+  season String? @db.VarChar(100)
+  isVerified Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variant PlantVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, normalizedName, decorativePart, season])
+  @@index([variantId, isVerified])
 }
 
 // Джерела інформації про рослину.
